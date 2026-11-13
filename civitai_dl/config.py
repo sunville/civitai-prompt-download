@@ -63,10 +63,7 @@ COLUMNS: list[tuple[str, str, str, str]] = [
 COLUMN_KEYS = [c[0] for c in COLUMNS]
 
 DEFAULT_PREVIEW_COLUMNS = ["prompt", "negativePrompt", "lora", "checkpoint", "tool", "tags"]
-DEFAULT_EXPORT_COLUMNS = [
-    "imageId", "pageUrl", "prompt", "negativePrompt", "lora", "checkpoint",
-    "baseModel", "modelId", "modelVersionId", "tool", "tags",
-]
+DEFAULT_EXPORT_COLUMNS = ["prompt"]
 
 
 def _default(obj: Any) -> Any:

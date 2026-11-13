@@ -11,11 +11,13 @@ from pathlib import Path
 
 from civitai_dl.config import COLUMN_KEYS, DEFAULT_PREVIEW_COLUMNS, Settings
 from civitai_dl.export import export_items
+from civitai_dl.naming import build_export_filename, sanitize_filename
 from civitai_dl.parser import (
     build_record,
     classify_tool,
     parse_target_url,
     prompt_tags,
+    strip_angle_tags,
     tags_text,
 )
 from civitai_dl.store import Store
@@ -71,15 +73,23 @@ class ParserTest(unittest.TestCase):
 
     def test_build_record(self) -> None:
         record = build_record(A1111_ITEM, "civitai.red")
-        self.assertEqual(record["prompt"], A1111_ITEM["meta"]["prompt"])
+        # 正向提示词会去掉 <...>（LoRA 语法）及其中内容
+        self.assertEqual(record["prompt"], "masterpiece, (best quality:1.2), 1girl,")
+        self.assertNotIn("<lora", record["prompt"])
         self.assertEqual(record["negative_prompt"], "bad hands")
         self.assertEqual(record["tool"], "WebUI")
         self.assertEqual(record["checkpoint"], "ckpt_v1")
         self.assertIn("detail:0.8", record["lora"])
         self.assertEqual(record["page_url"], "https://civitai.red/images/1001")
         self.assertTrue(record["prompt_hash"])
-        # 原始 JSON 可还原
+        # 原始 JSON 可还原（原始数据仍保留 <lora> 标签）
         self.assertEqual(json.loads(record["raw_json"])["id"], 1001)
+        self.assertIn("<lora", json.loads(record["raw_json"])["meta"]["prompt"])
+
+    def test_strip_angle_tags(self) -> None:
+        self.assertEqual(strip_angle_tags("<lora:a:0.8>, best quality, <lyco:b>"), ", best quality, ")
+        self.assertEqual(strip_angle_tags("a < b > c"), "a  c")
+        self.assertEqual(strip_angle_tags(""), "")
 
     def test_nested_meta(self) -> None:
         item = {"id": 1, "nsfwLevel": "None", "meta": {"id": 1, "meta": {"prompt": "hello, world"}}}
@@ -166,6 +176,16 @@ class ExportTest(unittest.TestCase):
         txt_lines = (self.root / "out.txt").read_text(encoding="utf-8").strip().splitlines()
         self.assertEqual(len(txt_lines), 2)
 
+    def test_legacy_prompt_cleaned_on_export(self) -> None:
+        # 模拟升级前就存在的旧数据：库里仍带 <lora:...>
+        self.store._conn.execute("UPDATE items SET prompt=? WHERE image_id=?", ("a <lora:x:1> b, c", 11))
+        self.store._conn.commit()
+        out = self.root / "legacy.csv"
+        export_items(self.store, out, fmt="csv", columns=["prompt"], task_id=self.task_id)
+        text = out.read_text(encoding="utf-8-sig")
+        self.assertNotIn("<lora", text)
+        self.assertIn("a  b, c", text)
+
     def test_nsfw_split(self) -> None:
         count, files = export_items(self.store, self.root / "split.csv", fmt="csv",
                                     columns=["prompt"], task_id=self.task_id, nsfw_split=True)
@@ -176,6 +196,31 @@ class ExportTest(unittest.TestCase):
     def test_empty_columns_raise(self) -> None:
         with self.assertRaises(ValueError):
             export_items(self.store, self.root / "empty.csv", fmt="csv", columns=[], task_id=self.task_id)
+
+
+class NamingTest(unittest.TestCase):
+    def test_filename_sort_and_period(self) -> None:
+        config = {"model_name": "Prefect illustrious XL", "sort": "Most Reactions", "period": "Month",
+                  "date_start": "", "date_end": ""}
+        self.assertEqual(build_export_filename(config, ".csv"), "Prefect illustrious XL_最热_最近一月.csv")
+
+    def test_filename_date_range_overrides_period(self) -> None:
+        config = {"model_name": "Prefect illustrious XL", "sort": "Newest", "period": "Month",
+                  "date_start": "2026-01-01", "date_end": "2026-02-01"}
+        self.assertEqual(build_export_filename(config, ".txt"),
+                         "Prefect illustrious XL_最新_2026-01-01至2026-02-01.txt")
+
+    def test_filename_sanitize(self) -> None:
+        config = {"model_name": 'a/b:c*?"d', "sort": "Newest", "period": "AllTime"}
+        name = build_export_filename(config, ".csv")
+        for char in '/\\:*?"<>|':
+            self.assertNotIn(char, name)
+        self.assertTrue(name.endswith(".csv"))
+        self.assertEqual(sanitize_filename("  "), "未命名")
+
+    def test_filename_entry_fallbacks(self) -> None:
+        self.assertIn("作者 alice", build_export_filename({"entry": "author", "username": "alice"}, ".csv"))
+        self.assertTrue(build_export_filename(None, ".csv").startswith("全部结果_"))
 
 
 class SettingsTest(unittest.TestCase):

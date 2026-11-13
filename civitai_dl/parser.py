@@ -195,6 +195,12 @@ def extract_checkpoint(
 
 _LORA_TOKEN_RE = re.compile(r"<[^>]+>")
 _TRAILING_WEIGHT_RE = re.compile(r":\s*\d+(?:\.\d+)?\s*$")
+_ANGLE_TAG_RE = re.compile(r"<[^<>]*>")
+
+
+def strip_angle_tags(text: str) -> str:
+    """删除所有尖角括号及其内容（例如 <lora:xxx:0.8>、<lyco:...> 等）。"""
+    return _ANGLE_TAG_RE.sub("", text or "")
 
 
 def _clean_tag(token: str) -> str:
@@ -247,10 +253,11 @@ def build_record(
 ) -> dict[str, Any]:
     """把 API image 对象转成写入 SQLite 的记录。"""
     meta = normalize_meta(item.get("meta"))
-    prompt = str(meta.get("prompt") or "")
+    raw_prompt = str(meta.get("prompt") or "")
+    prompt = strip_angle_tags(raw_prompt).strip()
     negative = str(meta.get("negativePrompt") or meta.get("negative_prompt") or "")
     checkpoint, model_id, version_id = extract_checkpoint(item, meta, resolved)
-    lora = extract_loras(meta, prompt, resolved)
+    lora = extract_loras(meta, raw_prompt, resolved)
     image_id = int(item.get("id"))
     return {
         "image_id": image_id,

@@ -16,6 +16,7 @@ from ..config import (
     COLUMNS, COLUMN_KEYS, CONTENT_LEVELS, ENTRY_KINDS, PERIODS, SITES, SORTS, TOOLS, Settings,
 )
 from ..export import export_items
+from ..parser import strip_angle_tags
 from ..paths import app_data_dir, resource_path
 from ..runner import TaskRunner, build_task_name
 from ..store import Store
@@ -793,6 +794,8 @@ class MainWindow(tk.Tk):
                     values.append(row.get("page_url") or "")
                 elif key == "rawJson":
                     values.append(truncate(row.get("raw_json"), 40))
+                elif key == "prompt":
+                    values.append(truncate(strip_angle_tags(row.get("prompt") or ""), 160))
                 else:
                     values.append(truncate(row.get(key), 160))
             self.preview_tree.insert("", "end", iid=str(row["image_id"]), values=values)

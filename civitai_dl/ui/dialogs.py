@@ -1,6 +1,7 @@
 """各类对话框：模型选择、导出、设置、关于、API Key 帮助、结果详情。"""
 from __future__ import annotations
 
+import json
 import os
 import queue
 import threading
@@ -14,7 +15,8 @@ from ..api import CivitaiClient
 from ..config import COLUMNS, CONTENT_LEVELS, DEFAULT_EXPORT_COLUMNS, SITES, Settings
 from ..errors import AppError
 from ..export import FORMAT_LABELS, export_items
-from ..parser import parse_target_url
+from ..naming import build_export_filename
+from ..parser import parse_target_url, strip_angle_tags
 from ..store import Store
 from .theme import BG, CARD, FONT_MONO, FONT_UI, MUTED, TEXT
 from .widgets import center_window
@@ -196,7 +198,9 @@ class ExportDialog(tk.Toplevel):
         self.settings = settings
         self.keyword = keyword
         self.selected_ids = list(selected_ids or [])
+        self.initial_task_id = task_id
         self.selected_label = f"仅选中结果（{len(self.selected_ids)} 条）" if self.selected_ids else ""
+        self._config_cache: dict[int, dict[str, Any]] = {}
         self.result: dict[str, Any] | None = None
         self.title("导出结果")
         _modal(self, parent, 760, 660)
@@ -225,7 +229,10 @@ class ExportDialog(tk.Toplevel):
                 if tid == task_id:
                     self.scope_var.set(label)
                     break
-        ttk.Combobox(row1, textvariable=self.scope_var, values=values, state="readonly", width=56).pack(side="left", padx=6)
+        self.scope_combo = ttk.Combobox(row1, textvariable=self.scope_var, values=values,
+                                        state="readonly", width=56)
+        self.scope_combo.pack(side="left", padx=6)
+        self.scope_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_scope_changed())
 
         row2 = ttk.Frame(outer)
         row2.pack(fill="x", pady=(10, 0))
@@ -254,7 +261,8 @@ class ExportDialog(tk.Toplevel):
         btn_row = ttk.Frame(outer)
         btn_row.pack(fill="x", pady=(4, 0))
         ttk.Button(btn_row, text="全选", command=lambda: self._set_all(True)).pack(side="left")
-        ttk.Button(btn_row, text="恢复默认", command=self._set_default).pack(side="left", padx=6)
+        ttk.Button(btn_row, text="全部取消", command=lambda: self._set_all(False)).pack(side="left", padx=6)
+        ttk.Button(btn_row, text="恢复默认", command=self._set_default).pack(side="left")
 
         ttk.Label(outer, text="保存到：", style="Section.TLabel").pack(anchor="w", pady=(12, 4))
         path_row = ttk.Frame(outer)
@@ -276,15 +284,40 @@ class ExportDialog(tk.Toplevel):
         self.fmt_var.set(self.fmt_codes[index])
         self.path_var.set(self._default_path(self.fmt_var.get()))
 
-    def _default_path(self, code: str) -> str:
-        import datetime
+    def _on_scope_changed(self) -> None:
+        self.path_var.set(self._default_path(self.fmt_var.get()))
 
+    def _config_for_scope(self, scope: str) -> dict[str, Any] | None:
+        """取出当前导出范围对应任务的配置，用于生成默认文件名。"""
+        if scope == self.selected_label:
+            task_id = self.initial_task_id
+        elif scope == "全部结果":
+            task_id = None
+        else:
+            task_id = self.scope_map.get(scope)
+        if task_id is None:
+            return None
+        task_id = int(task_id)
+        if task_id in self._config_cache:
+            return self._config_cache[task_id]
+        task = self.store.get_task(task_id)
+        config: dict[str, Any] | None = None
+        if task:
+            try:
+                config = json.loads(task.get("config_json") or "{}")
+            except ValueError:
+                config = None
+        if config is not None:
+            self._config_cache[task_id] = config
+        return config
+
+    def _default_path(self, code: str) -> str:
         ext = {"csv": ".csv", "jsonl": ".jsonl", "txt": ".txt", "xlsx": ".xlsx"}.get(code, ".csv")
         base = Path(self.settings.output_dir)
         if not base.exists():
             base = Path(os.path.expanduser("~"))
-        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        return str(base / f"civitai_prompts_{stamp}{ext}")
+        config = self._config_for_scope(self.scope_var.get())
+        return str(base / build_export_filename(config, ext))
 
     def _set_all(self, value: bool) -> None:
         for var in self.col_vars.values():
@@ -578,7 +611,7 @@ class ItemDetailDialog(tk.Toplevel):
             text.insert("1.0", str(value or "（空）"))
             text.configure(state="disabled")
 
-        add_tab("正向提示词", row.get("prompt"))
+        add_tab("正向提示词", strip_angle_tags(row.get("prompt")))
         add_tab("负向提示词", row.get("negative_prompt"))
         add_tab("LoRA / 模型", f"LoRA：{row.get('lora') or '（无）'}\n\nCheckpoint：{row.get('checkpoint') or '（无）'}\n\n"
                                 f"模型 ID：{row.get('model_id')}\n版本 ID：{row.get('model_version_id')}\n"

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .config import COLUMNS
+from .parser import strip_angle_tags
 from .store import Store
 
 EXPORT_LABELS = {key: english for key, _cn, english, _desc in COLUMNS}
@@ -20,7 +21,7 @@ def _value(row: dict[str, Any], key: str) -> Any:
     if key == "rawJson":
         return row.get("raw_json") or ""
     if key == "prompt":
-        return row.get("prompt") or ""
+        return strip_angle_tags(row.get("prompt") or "")
     if key == "negativePrompt":
         return row.get("negative_prompt") or ""
     if key == "imageId":
@@ -100,7 +101,7 @@ def _write_txt(path: Path, rows: list[dict[str, Any]]) -> int:
     written = 0
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         for row in rows:
-            prompt = str(row.get("prompt") or "").strip()
+            prompt = strip_angle_tags(str(row.get("prompt") or "")).strip()
             if not prompt:
                 continue
             fh.write(prompt.replace("\r\n", "\n").replace("\r", "\n") + "\n")
