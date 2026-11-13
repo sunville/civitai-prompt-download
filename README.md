@@ -107,6 +107,9 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 
 产物：`dist/CivitaiPromptDL.exe`，同时把使用说明/误报说明复制到 `dist/`。
 
+> 发布策略：`dist/` **只保留当前版本的 exe**，不保留旧版本备份（历史版本由 git tag 管理）。
+> 打包时如果程序正在运行，脚本会提示先关闭程序再构建。
+
 ---
 
 ## 数据位置
