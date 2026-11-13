@@ -57,6 +57,7 @@ class MainWindow(tk.Tk):
         self._task_item_ids: dict[str, int] = {}
         self._tray_icon = None
         self._closing = False
+        self._limit_vcmd = (self.register(self._validate_limit_text), "%P")
 
         self.title(f"{APP_NAME} v{__version__}")
         self.geometry("1400x900")
@@ -200,8 +201,18 @@ class MainWindow(tk.Tk):
         row_limit = ttk.Frame(filter_box)
         row_limit.pack(fill="x", pady=2)
         ttk.Label(row_limit, text="数量上限：", width=9).pack(side="left")
-        ttk.Spinbox(row_limit, from_=1, to=100000, textvariable=self.limit_var, width=9).pack(side="left")
-        ttk.Label(row_limit, text=" 条（筛选后保留数）", style="Muted.TLabel").pack(side="left")
+        self.limit_spin = ttk.Spinbox(
+            row_limit, from_=1, to=100000, textvariable=self.limit_var, width=12,
+            validate="key", validatecommand=self._limit_vcmd,
+        )
+        self.limit_spin.pack(side="left")
+        self.limit_spin.bind("<FocusIn>", lambda _e: self.limit_spin.selection_range(0, "end"))
+        self.limit_spin.bind("<Return>", lambda _e: self._commit_limit())
+        self.limit_spin.bind("<KP_Enter>", lambda _e: self._commit_limit())
+        self.limit_spin.bind("<FocusOut>", lambda _e: self._commit_limit())
+        ttk.Label(row_limit, text=" 条（可直接键盘输入，回车确认）", style="Muted.TLabel").pack(side="left")
+        ttk.Label(filter_box, text="上限是“筛选后保留”的条数；支持鼠标滚轮/上下键微调。",
+                  style="Muted.TLabel", wraplength=410).pack(anchor="w")
 
         tool_box = ttk.Frame(filter_box)
         tool_box.pack(fill="x", pady=(4, 0))
@@ -443,12 +454,14 @@ class MainWindow(tk.Tk):
             "tool_filter": [tool for tool, var in self.tool_vars.items() if var.get()],
             "resolve_model_names": bool(self.resolve_var.get()),
         }
-        try:
-            config["limit"] = int(self.limit_var.get())
-            if config["limit"] < 1:
-                raise ValueError
-        except ValueError:
-            messagebox.showwarning("提示", "数量上限必须是正整数", parent=self)
+        self._commit_limit()
+        raw_limit = self.limit_var.get().strip().replace(",", "").replace("，", "")
+        if not raw_limit.isdigit():
+            messagebox.showwarning("提示", "数量上限请填写正整数（输入框里可以直接键盘输入，回车确认）", parent=self)
+            return None
+        config["limit"] = int(raw_limit)
+        if not 1 <= config["limit"] <= 100000:
+            messagebox.showwarning("提示", "数量上限范围为 1 – 100000 条", parent=self)
             return None
         if not config["tool_filter"]:
             if not messagebox.askyesno("提示", "所有生成工具都没有勾选，将抓不到任何图。是否继续？", parent=self):
@@ -502,6 +515,23 @@ class MainWindow(tk.Tk):
                 return None
             config["keyword"] = keyword
         return config
+
+    def _validate_limit_text(self, proposed: str) -> bool:
+        """数量输入框只允许输入数字（允许暂时为空）。"""
+        if proposed == "":
+            return True
+        return proposed.isdigit() and len(proposed) <= 7
+
+    def _commit_limit(self) -> str:
+        """把输入框内容规范成合法数字（空/非法回退到默认值，超范围收敛到 1–100000）。"""
+        text = self.limit_var.get().strip().replace(",", "").replace("，", "")
+        try:
+            value = int(text) if text else self.settings.default_limit
+        except ValueError:
+            value = self.settings.default_limit
+        value = max(1, min(value, 100000))
+        self.limit_var.set(str(value))
+        return "break"
 
     def _add_task(self, start: bool = True) -> None:
         config = self._build_config_from_form()
