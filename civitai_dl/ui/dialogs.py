@@ -190,11 +190,13 @@ class ModelPickerDialog(tk.Toplevel):
 
 class ExportDialog(tk.Toplevel):
     def __init__(self, parent: tk.Misc, store: Store, settings: Settings, task_id: int | None,
-                 keyword: str = ""):
+                 keyword: str = "", selected_ids: list[int] | None = None):
         super().__init__(parent)
         self.store = store
         self.settings = settings
         self.keyword = keyword
+        self.selected_ids = list(selected_ids or [])
+        self.selected_label = f"仅选中结果（{len(self.selected_ids)} 条）" if self.selected_ids else ""
         self.result: dict[str, Any] | None = None
         self.title("导出结果")
         _modal(self, parent, 760, 660)
@@ -209,12 +211,16 @@ class ExportDialog(tk.Toplevel):
         ttk.Label(row1, text="导出范围：").pack(side="left")
         self.scope_map: dict[str, int | None] = {"全部结果": None}
         values = ["全部结果"]
+        if self.selected_label:
+            values.append(self.selected_label)
         for task in self.store.list_tasks(limit=100):
             label = f"#{task['id']} {task['name']}（{task['kept']} 条）"
             values.append(label)
             self.scope_map[label] = int(task["id"])
         self.scope_var = tk.StringVar(value="全部结果")
-        if task_id is not None:
+        if self.selected_label:
+            self.scope_var.set(self.selected_label)
+        elif task_id is not None:
             for label, tid in self.scope_map.items():
                 if tid == task_id:
                     self.scope_var.set(label)
@@ -307,13 +313,16 @@ class ExportDialog(tk.Toplevel):
         if code != "txt" and not columns:
             messagebox.showwarning("提示", "至少勾选一个导出字段", parent=self)
             return
-        task_id = self.scope_map.get(self.scope_var.get())
+        scope = self.scope_var.get()
+        use_selection = bool(self.selected_label) and scope == self.selected_label
+        task_id = None if use_selection else self.scope_map.get(scope)
+        image_ids = self.selected_ids if use_selection else None
         self.status_var.set("导出中…")
         self.update_idletasks()
         try:
             count, files = export_items(self.store, path, fmt=code, columns=columns,
                                         task_id=task_id, nsfw_split=self.split_var.get(),
-                                        keyword=self.keyword)
+                                        keyword=self.keyword, image_ids=image_ids)
         except ValueError as exc:
             messagebox.showwarning("无法导出", str(exc), parent=self)
             self.status_var.set("")

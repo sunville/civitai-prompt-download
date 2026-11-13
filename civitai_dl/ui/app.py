@@ -381,9 +381,12 @@ class MainWindow(tk.Tk):
         ttk.Button(prow, text="列设置", command=self._open_column_settings, style="Tool.TButton").pack(side="right")
         ttk.Button(prow, text="导出", command=self._open_export, style="Tool.TButton").pack(side="right", padx=4)
 
+        self._preview_rows: list[dict[str, Any]] = []
+        self._preview_sort_key = ""
+        self._preview_sort_desc = False
         table_frame = ttk.Frame(preview_box)
         table_frame.pack(fill="both", expand=True, pady=(4, 0))
-        self.preview_tree = ttk.Treeview(table_frame, columns=(), show="headings", height=10, selectmode="browse")
+        self.preview_tree = ttk.Treeview(table_frame, columns=(), show="headings", height=10, selectmode="extended")
         yscroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.preview_tree.yview)
         xscroll = ttk.Scrollbar(table_frame, orient="horizontal", command=self.preview_tree.xview)
         self.preview_tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
@@ -708,6 +711,13 @@ class MainWindow(tk.Tk):
         task_id = self._preview_task_map.get(self.preview_task_var.get())
         keyword = self.preview_keyword_var.get().strip() if hasattr(self, "preview_keyword_var") else ""
         rows = self.store.list_items(task_id=task_id, limit=1000, keyword=keyword)
+        self._preview_rows = rows
+        self._render_preview_table()
+        total = self.store.count_items(task_id)
+        self.preview_count.set(f"显示 {len(rows)} 条 / 共 {total} 条" + (f"（搜索：{keyword}）" if keyword else "")
+                               + "  可按住 Ctrl/Shift 多选后导出选中行")
+
+    def _render_preview_table(self) -> None:
         columns = [key for key in self.settings.preview_columns if key in COLUMN_KEYS]
         if not columns:
             columns = list(COLUMN_KEYS)
@@ -716,8 +726,23 @@ class MainWindow(tk.Tk):
                   "tags": 220, "imageId": 80, "pageUrl": 160, "baseModel": 110, "modelId": 90,
                   "modelVersionId": 110, "nsfwLevel": 80, "username": 110, "createdAt": 140, "rawJson": 120}
         self.preview_tree.configure(columns=columns, show="headings")
+        rows = list(self._preview_rows)
+        if self._preview_sort_key:
+            def sort_key(row: dict[str, Any]) -> Any:
+                value = row.get(self._preview_sort_key) if self._preview_sort_key != "imageId" else row.get("image_id")
+                if self._preview_sort_key == "pageUrl":
+                    value = row.get("page_url")
+                if isinstance(value, (int, float)):
+                    return (0, value)
+                return (1, str(value or "").lower())
+
+            rows.sort(key=sort_key, reverse=self._preview_sort_desc)
         for key in columns:
-            self.preview_tree.heading(key, text=labels.get(key, key))
+            arrow = ""
+            if key == self._preview_sort_key:
+                arrow = " ▼" if self._preview_sort_desc else " ▲"
+            self.preview_tree.heading(key, text=labels.get(key, key) + arrow,
+                                      command=lambda k=key: self._sort_preview(k))
             self.preview_tree.column(key, width=widths.get(key, 120), stretch=(key in ("prompt", "negativePrompt")))
         self.preview_tree.delete(*self.preview_tree.get_children())
         for row in rows:
@@ -732,8 +757,14 @@ class MainWindow(tk.Tk):
                 else:
                     values.append(truncate(row.get(key), 160))
             self.preview_tree.insert("", "end", iid=str(row["image_id"]), values=values)
-        total = self.store.count_items(task_id)
-        self.preview_count.set(f"显示 {len(rows)} 条 / 共 {total} 条" + (f"（搜索：{keyword}）" if keyword else ""))
+
+    def _sort_preview(self, key: str) -> None:
+        if self._preview_sort_key == key:
+            self._preview_sort_desc = not self._preview_sort_desc
+        else:
+            self._preview_sort_key = key
+            self._preview_sort_desc = False
+        self._render_preview_table()
 
     def _open_item_detail(self) -> None:
         selection = self.preview_tree.selection()
@@ -778,7 +809,13 @@ class MainWindow(tk.Tk):
     def _open_export(self) -> None:
         task_id = self._preview_task_map.get(self.preview_task_var.get())
         keyword = self.preview_keyword_var.get().strip() if hasattr(self, "preview_keyword_var") else ""
-        ExportDialog(self, self.store, self.settings, task_id, keyword)
+        selected_ids = []
+        for iid in self.preview_tree.selection():
+            try:
+                selected_ids.append(int(iid))
+            except (TypeError, ValueError):
+                continue
+        ExportDialog(self, self.store, self.settings, task_id, keyword, selected_ids=selected_ids)
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self, self.settings)

@@ -36,8 +36,12 @@ def _value(row: dict[str, Any], key: str) -> Any:
     return row.get(key) or ""
 
 
-def _rows(store: Store, task_id: int | None, columns: list[str], keyword: str = "") -> list[dict[str, Any]]:
+def _rows(store: Store, task_id: int | None, columns: list[str], keyword: str = "",
+          image_ids: list[int] | None = None) -> list[dict[str, Any]]:
     rows = list(store.iter_items(task_id=task_id))
+    if image_ids is not None:
+        wanted = set(image_ids)
+        rows = [r for r in rows if int(r.get("image_id") or 0) in wanted]
     if keyword:
         needle = keyword.lower()
         rows = [r for r in rows if any(needle in str(r.get(f) or "").lower() for f in ("prompt", "negative_prompt", "lora", "checkpoint", "tags"))]
@@ -133,13 +137,14 @@ def export_items(
     task_id: int | None = None,
     nsfw_split: bool = False,
     keyword: str = "",
+    image_ids: list[int] | None = None,
 ) -> tuple[int, list[Path]]:
     """导出结果，返回 (写入条数, 生成的文件列表)。"""
     path = Path(path)
     columns = _dedupe_columns(columns or [])
     if not columns:
         raise ValueError("至少选择一个导出字段")
-    rows = _rows(store, task_id, columns, keyword=keyword)
+    rows = _rows(store, task_id, columns, keyword=keyword, image_ids=image_ids)
     if not rows:
         raise ValueError("没有可导出的数据")
 
