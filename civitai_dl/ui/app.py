@@ -528,7 +528,16 @@ class MainWindow(tk.Tk):
         task = self.store.get_task(task_id)
         if not task:
             return
-        if task["status"] == "done" and int(task["kept"]) > 0:
+        if task["status"] == "done" and int(task["kept"]) == 0:
+            # 上次没抓到任何数据（例如筛选组合过严/接口限制）：允许直接重跑
+            self.store.update_task(
+                task_id, status="pending", cursor=None, kept=0, fetched=0, requests=0,
+                skipped_no_meta=0, skipped_tool=0, skipped_tags=0, skipped_date=0, skipped_dup=0,
+                message="",
+            )
+            self._log("INFO", f"任务 #{task_id} 上次没有抓到数据，重新开始")
+            task = self.store.get_task(task_id)
+        elif task["status"] == "done" and int(task["kept"]) > 0:
             if not messagebox.askyesno("任务已完成", "这个任务已完成。是否从头再跑一次？\n（会新建一个相同配置的任务）", parent=self):
                 return
             config = self._load_task_config(task)

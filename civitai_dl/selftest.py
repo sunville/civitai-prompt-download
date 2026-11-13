@@ -178,3 +178,53 @@ def run_selftest(live: bool = False) -> int:
     if failures:
         print("\n失败项：" + "、".join(failures))
     return 0 if not failures else 1
+
+
+def run_capture_test() -> int:
+    """打包后回归测试：真实跑一次「按模型」抓取（覆盖 modelId → 版本列表的修复）。"""
+    import tempfile
+
+    from .config import Settings, TOOLS
+    from .runner import TaskRunner, build_task_name
+    from .store import Store
+
+    settings = Settings()
+    settings.site = "civitai.red"
+    settings.rate_interval = 1.0
+    settings.default_limit = 3
+    settings.resolve_model_names = True
+    config = {
+        "entry": "model", "site": "civitai.red", "content_level": "all",
+        "sort": "Newest", "period": "AllTime", "date_start": "", "date_end": "",
+        "tag_filter": [], "tool_filter": list(TOOLS),
+        "resolve_model_names": True, "limit": 3,
+        "model_id": 1224788, "model_name": "Prefect illustrious XL",
+    }
+    lines: list[str] = [f"Civitai 提示词批量下载器 v{__version__} 抓取回归测试"]
+    ok = False
+    with tempfile.TemporaryDirectory(prefix="civitai_dl_capture_") as tmp:
+        store = Store(Path(tmp) / "capture.db")
+        task_id = store.add_task(config, build_task_name(config))
+        logs: list[str] = []
+        runner = TaskRunner(store, settings, task_id,
+                            lambda kind, payload: logs.append(payload.get("message", "")) if kind == "log" else None)
+        runner.start()
+        runner._thread.join(timeout=240)
+        task = store.get_task(task_id)
+        rows = store.list_items(task_id=task_id, limit=5)
+        lines.append(f"任务状态：{task['status']}；保留：{task['kept']}；抓取：{task['fetched']}；说明：{task['message']}")
+        lines.append("关键日志：" + " | ".join(m for m in logs if ("版本" in m or "上限" in m or "没有更多" in m))[:800])
+        for row in rows:
+            lines.append(f"  {row['image_id']} | {row['tool']} | {row['nsfw_level']} | {(row['prompt'] or '')[:60]}")
+        store.close()
+        ok = task["status"] == "done" and int(task["kept"]) > 0
+    lines.append("结果：" + ("PASS" if ok else "FAIL"))
+    report = "\n".join(lines)
+    print(report)
+    try:
+        from .paths import app_data_dir
+
+        (app_data_dir() / "capture_test_result.txt").write_text(report, encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    return 0 if ok else 1

@@ -165,19 +165,30 @@ class TaskRunner:
             self._run_site_search()
         elif entry == "urls":
             self._run_urls()
+        elif entry in ("model", "lora", "keyword"):
+            versions = self._resolve_task_model_versions()
+            if versions:
+                self._run_versions(entry, versions)
+            else:
+                self._run_paginated(entry=entry, target_index=0)
         else:
             self._run_paginated(entry=entry, target_index=0)
         if not self._finished:
             self._finish_done("已完成")
 
     # ---------------- 入口：分页抓取 ----------------
-    def _build_params(self, entry: str, cursor: str | None = None) -> dict[str, Any]:
+    def _base_params(self) -> dict[str, Any]:
         cfg = self._config
         sort = str(cfg.get("sort") or "Newest")
         params: dict[str, Any] = {"limit": PAGE_SIZE, "withMeta": "true", "sort": sort}
         if sort not in ("Newest", "Oldest"):
             params["period"] = str(cfg.get("period") or "AllTime")
         params["nsfw"] = "None" if cfg.get("content_level") == "sfw" else "X"
+        return params
+
+    def _build_params(self, entry: str, cursor: str | None = None) -> dict[str, Any]:
+        cfg = self._config
+        params = self._base_params()
         if entry in ("model", "lora", "keyword"):
             if cfg.get("model_version_id"):
                 params["modelVersionId"] = int(cfg["model_version_id"])
@@ -190,6 +201,101 @@ class TaskRunner:
         if cursor:
             params["cursor"] = cursor
         return params
+
+    def _resolve_task_model_versions(self) -> list[int]:
+        """按模型/ LoRA 抓取时，解析出该模型的全部版本 ID（官方 modelId 过滤对部分模型失效）。"""
+        cfg = self._config
+        if cfg.get("model_version_ids"):
+            return [int(v) for v in cfg["model_version_ids"] if str(v).isdigit()]
+        if cfg.get("model_version_id"):
+            return [int(cfg["model_version_id"])]
+        model_id = cfg.get("model_id")
+        if not model_id:
+            return []
+        versions = self._fetch_model_versions(int(model_id))
+        if versions:
+            self._log("INFO", f"将按 {len(versions)} 个模型版本逐个抓取（官方 modelId 过滤对部分模型不生效）")
+        return versions
+
+    def _fetch_model_versions(self, model_id: int) -> list[int]:
+        assert self._client is not None
+        try:
+            data = self._client.model(int(model_id))
+        except AppError as exc:
+            self._log("WARN", f"获取模型 {model_id} 的版本列表失败：{exc.friendly()}，尝试直接按 modelId 抓取")
+            return []
+        all_versions = data.get("modelVersions") or []
+        versions = [int(v["id"]) for v in all_versions if v.get("id")]
+        if len(versions) > 30:
+            self._log("WARN", f"模型「{data.get('name')}」共有 {len(versions)} 个版本，只抓取最新的 30 个版本")
+            versions = versions[:30]
+        return versions
+
+    def _run_versions(self, entry: str, versions: list[int], persist_state: bool = True,
+                      finish: bool = True) -> None:
+        """按模型版本逐个分页抓取。"""
+        assert self._client is not None
+        if persist_state:
+            version_index = int(self._cursor_state.get("version_index") or 0)
+            cursor = self._cursor_state.get("cursor")
+        else:
+            version_index, cursor = 0, None
+        max_requests = max(60, int(self._limit * 0.3) + 30)
+        page_no = 0
+        for idx in range(version_index, len(versions)):
+            version_id = versions[idx]
+            if idx != version_index:
+                cursor = None
+            self._log("INFO", f"开始抓取模型版本 {version_id}（{idx + 1}/{len(versions)}）")
+            while True:
+                self._checkpoint()
+                params = self._base_params()
+                params["modelVersionId"] = version_id
+                if cursor:
+                    params["cursor"] = cursor
+                data = self._client.images(**params)
+                items = data.get("items") or []
+                metadata = data.get("metadata") or {}
+                page_no += 1
+                self._counters["fetched"] += len(items)
+                self._log("INFO", f"版本 {version_id} 第 {page_no} 页：返回 {len(items)} 条")
+                stop_by_date = False
+                stop_by_limit = False
+                for item in items:
+                    self._checkpoint()
+                    result = self._handle_item(item)
+                    if result == "stop_date":
+                        stop_by_date = True
+                        break
+                    if result == "stop_limit":
+                        stop_by_limit = True
+                        break
+                if stop_by_limit or self._counters["kept"] >= self._limit:
+                    if finish:
+                        self._finish_done(f"达到数量上限（{self._limit} 条）")
+                    return
+                if self._client.request_count >= max_requests:
+                    if finish:
+                        self._finish_done(f"达到请求上限（{max_requests} 次），已保留 {self._counters['kept']} 条")
+                    return
+                if stop_by_date:
+                    if finish:
+                        self._finish_done("已到达日期范围边界")
+                    return
+                next_cursor = metadata.get("nextCursor")
+                if not next_cursor:
+                    break
+                if next_cursor == cursor:
+                    break
+                cursor = next_cursor
+                if persist_state:
+                    self._cursor_state = {"version_index": idx, "cursor": cursor}
+                    self._save_progress()
+            if persist_state:
+                self._cursor_state = {"version_index": idx + 1, "cursor": None}
+                self._save_progress()
+        if finish:
+            self._finish_done(f"没有更多数据（已遍历 {len(versions)} 个模型版本）")
 
     def _run_paginated(self, entry: str, target_index: int = 0) -> None:
         assert self._client is not None
@@ -256,6 +362,16 @@ class TaskRunner:
                 if self._counters["kept"] >= self._limit:
                     break
                 continue
+            if kind == "model":
+                versions = self._fetch_model_versions(int(value))
+                if versions:
+                    self._run_versions("model", versions, persist_state=False, finish=False)
+                    if self._counters["kept"] >= self._limit:
+                        self._finish_done(f"达到数量上限（{self._limit} 条）")
+                        return
+                    self._cursor_state = {"target_index": index + 1, "cursor": None}
+                    self._save_progress()
+                    continue
             query = url_query_value(kind, value)
             if not query:
                 self._log("WARN", f"暂不支持的链接类型，跳过：{urls[index]}")

@@ -3,7 +3,9 @@
 批量下载 civitai（`civitai.com` / `civitai.red`）上公开图片的**提示词与生成参数**的 Windows 桌面工具。
 单文件绿色 exe，中文界面，结果存本地 SQLite，支持断点续传、去重、CSV / JSONL / TXT / Excel 导出。
 
-> 当前版本：**v0.1.0（MVP）**，交付物：`dist/CivitaiPromptDL.exe` + 使用说明 + 误报处理说明。
+> 当前版本：**v0.1.1（MVP）**，交付物：`dist/CivitaiPromptDL.exe` + 使用说明 + 误报处理说明。
+>
+> v0.1.1 修复：部分模型官方 `modelId` 过滤返回 0 条的问题（改为按模型版本逐个抓取）；「没有抓到数据」的已完成任务可直接选中后点「开始 / 继续」重跑。
 
 ---
 

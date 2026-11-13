@@ -38,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="store_true", help="显示版本号")
     parser.add_argument("--selftest", action="store_true", help="运行自检（不打开界面）")
     parser.add_argument("--live", action="store_true", help="自检时额外做一次真实 API 请求（需要能访问 civitai）")
+    parser.add_argument("--capture-test", action="store_true", help="真实抓取回归测试（抓 3 条，写结果文件）")
     args = parser.parse_args(argv)
 
     if args.version:
@@ -48,6 +49,11 @@ def main(argv: list[str] | None = None) -> int:
         from .selftest import run_selftest
 
         return run_selftest(live=args.live)
+
+    if args.capture_test:
+        from .selftest import run_capture_test
+
+        return run_capture_test()
 
     multiprocessing.freeze_support()
     _enable_dpi_awareness()
