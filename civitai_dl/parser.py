@@ -196,11 +196,26 @@ def extract_checkpoint(
 _LORA_TOKEN_RE = re.compile(r"<[^>]+>")
 _TRAILING_WEIGHT_RE = re.compile(r":\s*\d+(?:\.\d+)?\s*$")
 _ANGLE_TAG_RE = re.compile(r"<[^<>]*>")
+_DOUBLE_UNDERSCORE_RE = re.compile(r"_{2,}")
 
 
 def strip_angle_tags(text: str) -> str:
     """删除所有尖角括号及其内容（例如 <lora:xxx:0.8>、<lyco:...> 等）。"""
     return _ANGLE_TAG_RE.sub("", text or "")
+
+
+def strip_double_underscores(text: str) -> str:
+    """删除连续两个及以上的下划线。
+
+    wildcard 插件用 __name__ 表示通配符，爬到的提示词里如果残留 __，
+    画图时会触发 wildcard 报错，所以抓取/导出/预览时统一清掉。
+    """
+    return _DOUBLE_UNDERSCORE_RE.sub("", text or "")
+
+
+def clean_prompt(text: str) -> str:
+    """正向提示词清洗：去掉 <...> 内容，再删除连续双下划线。"""
+    return strip_double_underscores(strip_angle_tags(text or "")).strip()
 
 
 def _clean_tag(token: str) -> str:
@@ -254,7 +269,7 @@ def build_record(
     """把 API image 对象转成写入 SQLite 的记录。"""
     meta = normalize_meta(item.get("meta"))
     raw_prompt = str(meta.get("prompt") or "")
-    prompt = strip_angle_tags(raw_prompt).strip()
+    prompt = clean_prompt(raw_prompt)
     negative = str(meta.get("negativePrompt") or meta.get("negative_prompt") or "")
     checkpoint, model_id, version_id = extract_checkpoint(item, meta, resolved)
     lora = extract_loras(meta, raw_prompt, resolved)

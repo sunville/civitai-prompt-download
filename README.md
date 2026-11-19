@@ -3,7 +3,9 @@
 批量下载 civitai（`civitai.com` / `civitai.red`）上公开图片的**提示词与生成参数**的 Windows 桌面工具。
 单文件绿色 exe，中文界面，结果存本地 SQLite，支持断点续传、去重、CSV / JSONL / TXT / Excel 导出。
 
-> 当前版本：**v0.1.3（MVP）**，交付物：`dist/CivitaiPromptDL.exe` + 使用说明 + 误报处理说明。
+> 当前版本：**v0.1.4（MVP）**，交付物：`dist/CivitaiPromptDL.exe` + 使用说明 + 误报处理说明。
+>
+> v0.1.4：正向提示词会自动删除连续双下划线 `__`（避免 wildcard 插件报错）；旧任务的导出/预览也会实时清洗。
 >
 > v0.1.3：正向提示词自动删除尖括号内容（<lora:...> 等）；导出字段默认只勾选正向提示词，新增「全部取消」；默认文件名改为「checkpoint_排序_周期/日期范围」。
 >

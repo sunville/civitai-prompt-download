@@ -16,7 +16,7 @@ from ..config import COLUMNS, CONTENT_LEVELS, DEFAULT_EXPORT_COLUMNS, SITES, Set
 from ..errors import AppError
 from ..export import FORMAT_LABELS, export_items
 from ..naming import build_export_filename
-from ..parser import parse_target_url, strip_angle_tags
+from ..parser import clean_prompt, parse_target_url
 from ..store import Store
 from .theme import BG, CARD, FONT_MONO, FONT_UI, MUTED, TEXT
 from .widgets import center_window
@@ -611,7 +611,7 @@ class ItemDetailDialog(tk.Toplevel):
             text.insert("1.0", str(value or "（空）"))
             text.configure(state="disabled")
 
-        add_tab("正向提示词", strip_angle_tags(row.get("prompt")))
+        add_tab("正向提示词", clean_prompt(row.get("prompt")))
         add_tab("负向提示词", row.get("negative_prompt"))
         add_tab("LoRA / 模型", f"LoRA：{row.get('lora') or '（无）'}\n\nCheckpoint：{row.get('checkpoint') or '（无）'}\n\n"
                                 f"模型 ID：{row.get('model_id')}\n版本 ID：{row.get('model_version_id')}\n"

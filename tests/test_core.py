@@ -15,9 +15,11 @@ from civitai_dl.naming import build_export_filename, sanitize_filename
 from civitai_dl.parser import (
     build_record,
     classify_tool,
+    clean_prompt,
     parse_target_url,
     prompt_tags,
     strip_angle_tags,
+    strip_double_underscores,
     tags_text,
 )
 from civitai_dl.store import Store
@@ -90,6 +92,25 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(strip_angle_tags("<lora:a:0.8>, best quality, <lyco:b>"), ", best quality, ")
         self.assertEqual(strip_angle_tags("a < b > c"), "a  c")
         self.assertEqual(strip_angle_tags(""), "")
+
+    def test_strip_double_underscores(self) -> None:
+        # wildcard 语法 __name__ 会报错，抓取时统一清掉连续 2 个及以上的下划线
+        self.assertEqual(strip_double_underscores("__cat__"), "cat")
+        self.assertEqual(strip_double_underscores("a__b ___ c"), "ab  c")
+        self.assertEqual(strip_double_underscores("normal_tag"), "normal_tag")
+        self.assertEqual(strip_double_underscores(""), "")
+
+    def test_clean_prompt(self) -> None:
+        self.assertEqual(clean_prompt("<lora:x:0.8> __cat__, __dog__"), "cat, dog")
+        self.assertEqual(clean_prompt("__masterpiece__, best quality"), "masterpiece, best quality")
+
+    def test_build_record_removes_double_underscores(self) -> None:
+        item = json.loads(json.dumps(A1111_ITEM))
+        item["id"] = 1003
+        item["meta"]["prompt"] = "__cat__, (best quality:1.2), __dog__"
+        record = build_record(item, "civitai.red")
+        self.assertEqual(record["prompt"], "cat, (best quality:1.2), dog")
+        self.assertEqual(record["tags"], "cat, best quality, dog")
 
     def test_nested_meta(self) -> None:
         item = {"id": 1, "nsfwLevel": "None", "meta": {"id": 1, "meta": {"prompt": "hello, world"}}}
@@ -177,13 +198,14 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(len(txt_lines), 2)
 
     def test_legacy_prompt_cleaned_on_export(self) -> None:
-        # 模拟升级前就存在的旧数据：库里仍带 <lora:...>
-        self.store._conn.execute("UPDATE items SET prompt=? WHERE image_id=?", ("a <lora:x:1> b, c", 11))
+        # 模拟升级前就存在的旧数据：库里仍带 <lora:...> 和 __ 通配符下划线
+        self.store._conn.execute("UPDATE items SET prompt=? WHERE image_id=?", ("a <lora:x:1> __b__, c", 11))
         self.store._conn.commit()
         out = self.root / "legacy.csv"
         export_items(self.store, out, fmt="csv", columns=["prompt"], task_id=self.task_id)
         text = out.read_text(encoding="utf-8-sig")
         self.assertNotIn("<lora", text)
+        self.assertNotIn("__", text)
         self.assertIn("a  b, c", text)
 
     def test_nsfw_split(self) -> None:

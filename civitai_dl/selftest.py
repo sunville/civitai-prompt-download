@@ -59,7 +59,7 @@ def _sample_images() -> list[dict]:
 def run_selftest(live: bool = False) -> int:
     from .config import Settings
     from .export import export_items
-    from .parser import build_record, classify_tool, parse_target_url, prompt_tags
+    from .parser import build_record, classify_tool, clean_prompt, parse_target_url, prompt_tags
     from .store import Store
 
     lines: list[str] = []
@@ -89,6 +89,12 @@ def run_selftest(live: bool = False) -> int:
     check("URN checkpoint 解析", onsite["checkpoint"] not in ("", None) and not onsite["checkpoint"].startswith("urn:"),
           onsite["checkpoint"])
     check("无 meta 记录可生成", build_record(empty, "civitai.red")["prompt"] == "")
+    check("双下划线清洗", clean_prompt("__a__, b__c") == "a, bc", clean_prompt("__a__, b__c"))
+    check("提示词双下划线清理", build_record(
+        {"id": 999, "nsfwLevel": "None", "baseModel": "SDXL", "modelVersionIds": [],
+         "meta": {"prompt": "__masterpiece__, best quality"}},
+        "civitai.red",
+    )["prompt"] == "masterpiece, best quality")
 
     # 2. URL 解析
     check("图片链接", parse_target_url("https://civitai.com/images/123456") == ("image", 123456))
